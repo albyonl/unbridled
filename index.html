@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>unbridled</title>
+  <link rel="icon" type="image/png" href="./favicon.png">
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&display=swap");
+    :root {
+      --ink: rgba(15, 15, 15, 0.7);
+    }
+    * {
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #fff;
+      color: #0f0f0f;
+      font-family: "IBM Plex Sans", sans-serif;
+      position: relative;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: crisp-edges;
+      image-rendering: pixelated;
+    }
+    #title {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: lowercase;
+      color: rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="title">unrbidled</div>
+
+  <script>
+    const canvas = document.getElementById("scene");
+    const ctx = canvas.getContext("2d");
+
+    const arcs = [];
+    let width = 0;
+    let height = 0;
+    let lastTime = performance.now();
+    let spawnClock = 0;
+    let nextSpawn = 0.8;
+
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const cubicPoint = (p0, p1, p2, p3, t) => ({
+      x: (1 - t) ** 3 * p0.x + 3 * (1 - t) ** 2 * t * p1.x + 3 * (1 - t) * t ** 2 * p2.x + t ** 3 * p3.x,
+      y: (1 - t) ** 3 * p0.y + 3 * (1 - t) ** 2 * t * p1.y + 3 * (1 - t) * t ** 2 * p2.y + t ** 3 * p3.y,
+    });
+
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    function spawnArc(options = {}) {
+      const { seedProgress = 0, skipTimerReset = false } = options;
+      const fromLeft = Math.random() < 0.5;
+      const margin = Math.max(140, width * 0.4);
+      const start = { x: fromLeft ? -margin : width + margin, y: Math.random() * height };
+      const end = { x: fromLeft ? width + margin : -margin, y: Math.min(height, Math.max(0, start.y + (Math.random() - 0.5) * height * 0.12)) };
+
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const r = Math.random();
+      const curveRange = r < 0.26 ? 5.0 : r < 0.68 ? 3.2 : 2.2; // stronger average bend
+      const curve = (Math.random() - 0.5) * curveRange;
+
+      const ctrl1 = { x: start.x + dx * 0.22, y: start.y + dy * 0.22 + curve * height * 0.34 };
+      const ctrl2 = { x: start.x + dx * 0.78, y: start.y + dy * 0.78 - curve * height * 0.34 };
+
+      const speed = lerp(0.07, 0.15, Math.random()); // normalized per second
+      const thickness = lerp(0.4, 1.05, Math.random() ** 2);
+      const tailDelay = lerp(0.22, 0.38, Math.random());
+
+      arcs.push({
+        start,
+        ctrl1,
+        ctrl2,
+        end,
+        head: seedProgress,
+        tail: Math.max(0, seedProgress - tailDelay),
+        tailDelay,
+        speed,
+        thickness,
+        opacity: lerp(0.4, 0.8, Math.random())
+      });
+
+      if (!skipTimerReset) {
+        nextSpawn = lerp(0.35, 1.2, Math.random());
+        spawnClock = 0;
+      }
+    }
+
+    function seedInitial(count = 10) {
+      for (let i = 0; i < count; i++) {
+        const p = Math.random();
+        spawnArc({ seedProgress: p, skipTimerReset: true });
+      }
+      spawnClock = 0;
+      nextSpawn = lerp(0.35, 1.2, Math.random());
+    }
+
+    function drawArc(arc) {
+      const { start, ctrl1, ctrl2, end, head, tail, thickness, opacity } = arc;
+      ctx.lineWidth = thickness;
+      ctx.strokeStyle = `rgba(15, 15, 15, ${opacity})`;
+      ctx.beginPath();
+      const steps = Math.max(2, Math.ceil((head - tail) * 80));
+      for (let i = 0; i <= steps; i++) {
+        const t = tail + (head - tail) * (i / steps);
+        const p = cubicPoint(start, ctrl1, ctrl2, end, t);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+    }
+
+    function update(dt) {
+      spawnClock += dt;
+      if (spawnClock >= nextSpawn) spawnArc();
+
+      for (let i = arcs.length - 1; i >= 0; i--) {
+        const arc = arcs[i];
+        arc.head = Math.min(1.1, arc.head + arc.speed * dt);
+        if (arc.head > arc.tailDelay) {
+          arc.tail = Math.min(arc.head - arc.tailDelay, 1.1);
+        }
+        if (arc.tail >= 1.05) {
+          arcs.splice(i, 1);
+        }
+      }
+    }
+
+    function render() {
+      ctx.imageSmoothingEnabled = false;
+      ctx.lineCap = "butt";
+      ctx.clearRect(0, 0, width, height);
+      arcs.forEach(drawArc);
+    }
+
+    function loop(now) {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+      update(dt);
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    resize();
+    window.addEventListener("resize", resize);
+    seedInitial(10);
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
